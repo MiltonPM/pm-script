@@ -1,0 +1,49 @@
+#!/bin/bash
+# Define variables
+urlRelease=$1
+releaseName=$3
+tarName=processmaker4-$releaseName.tar.gz
+echo "[INFO] Release Name: $releaseName --> File: $tarName"
+
+processmakerPath=$2
+echo "[INFO] Using PM4 path: $processmakerPath"
+upgradeFolder=/tmp/processmakerLogs/$releaseName
+rm -rf $upgradeFolder
+mkdir -p $upgradeFolder
+
+# Decompress new release
+echo "[INFO] Download file tar"
+cd $upgradeFolder
+#wget $urlRelease
+curl -vLJO -H 'Accept: application/octet-stream' $urlRelease
+tar -xzvf $tarName
+releaseFolder=$(ls | grep -v tar.gz)
+echo "[INFO] Release folder: $releaseFolder"
+# Make backup configuration files
+echo "[INFO] Merge composer files"
+jq -s '.[0] * .[1]' $processmakerPath/composer.json $upgradeFolder/$releaseFolder/composer.json > composer.json
+jq -s '.[0] * .[1]' $processmakerPath/composer.lock $upgradeFolder/$releaseFolder/composer.lock > composer.lock
+echo "[INFO] Backup configuration files"
+cp -f $processmakerPath/laravel-echo-server.json $upgradeFolder
+cp -f $processmakerPath/.env $upgradeFolder
+
+echo "[INFO] Overwrite new code"
+rsync -Paz $releaseFolder/ $processmakerPath/
+
+echo "[INFO] Sets backup configuration files"
+rsync -Pavz laravel-echo-server.json $processmakerPath/laravel-echo-server
+rsync -Pavz composer.json $processmakerPath/composer.json
+rsync -Pavz composer.lock $processmakerPath/composer.lock
+rsync -Pavz .env $processmakerPath/.env
+
+echo "[INFO] Update composer packages"
+cd $processmakerPath
+composer install --no-dev
+composer update vendor/processmaker/* --no-dev -v
+# Update Database, views, routes...
+echo "[INFO] Update database and clear ProcessMaker cache"
+php artisan migrate --force
+php artisan view:clear
+php artisan cache:clear
+php artisan config:cache
+chown -R nginx:nginx $processmakerPath
